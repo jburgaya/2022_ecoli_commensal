@@ -24,4 +24,7 @@ A symbolic link to a directory containing the eggnog-mapper database should be p
 ## Author
 Judit Burgaya (BurgayaVentura.Judit@mh-hannover.de)
 
-The pipeline was in great part based on this [workflow](https://github.com/microbial-pangenomes-lab/2021_ecoli_pathogenicity) from our [lab](https://github.com/microbial-pangenomes-lab).
+The pipeline was in great part based on this [workflow](https://github.com/microbial-pangenomes-lab/2021_ecoli_pathogenicity) from our [lab](https://github.com/microbial-pangenomes-lab), used in the following [study](https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1010112):
+
+Denamur E, Condamine B, Esposito-Farèse M, Royer G, Clermont O, et al. (2022) Genome wide association study of Escherichia coli bloodstream infection isolates identifies genetic determinants for the portal of entry but not fatal outcome. PLOS Genetics 18(3): e1010112. https://doi.org/10.1371/journal.pgen.1010112
+
