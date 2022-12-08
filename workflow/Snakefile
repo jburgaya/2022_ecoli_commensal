@@ -1,0 +1,1377 @@
+# Snakefile with the rules to run the GWAS analysis on a BSI and commensal E coli dataset
+
+from snakemake.utils import validate
+import pandas as pd
+import os
+
+# ----- load config file ----- #
+
+configfile: "config/config.yaml"
+
+# ----- define functions ----- #
+
+def _read_samples(infile):
+  m = pd.read_csv(infile, sep='\t', index_col=0, header=None)
+  return set(m.index)
+
+def _read_pe_samples(infile):
+  p = pd.read_csv(infile, sep='\t', index_col=0)
+  return set(p.index)
+
+# ----- start execution of the rules ----- #
+
+rule impute_dataset:
+  input: config["full"]
+  output: config["full_imputed"]
+  conda: "envs/mice.yaml"
+  shell:
+    "Rscript workflow/scripts/impute.R {input} {output}"
+
+rule st:
+  input:
+    expand("data/fastas/{sample}.fasta",
+           sample=_read_samples(config["unitigs_input"]))
+  output: config["mlst"]
+  conda: "envs/mlst.yaml"
+  shell:
+    """
+    mlst --scheme ecoli {input} | cut -f1,3 > {output}
+    sed -i 's$data/fastas/$$g' {output} | sed -i 's/.fasta//g' {output}
+    """
+
+rule mash_sketch:
+  input: config["mash_input"]
+  output: config["sketches"]
+  params: config["sketches_base"]
+  threads: 5
+  conda: "envs/mash.yaml"
+  log: "out/logs/mash_sketch.log"
+  shell:
+    "mash sketch -p {threads} -s 10000 -o {params} -l {input}"
+
+rule distance:
+  input: config["sketches"]
+  output: config["distances"]
+  threads: 5
+  conda: "envs/mash.yaml"
+  log: "out/logs/distance.log"
+  shell:
+    "mash dist -p {threads} {input} {input} | square_mash > {output}"
+
+rule unitigs:
+  input: config["unitigs_input"]
+  output:
+    config["unitigs"],
+    config["unitigs_rtab"]
+  params: config["unitigs_dir"]
+  threads: 20
+  conda: "envs/unitig-counter.yaml"
+  log: "out/logs/unitigs.log"
+  shell:
+    "rm -rf {params} && unitig-counter -strains {input} -output {params} -nb-cores {threads}"
+
+rule similarity:
+  input:
+    config["full_imputed"],
+    config["unitigs"]
+  output:
+    config["similarities"]
+  log: "out/logs/unitigs2covariance.log"
+  shell:
+    "python workflow/scripts/unitigs2covar.py {input} --sample 0.05 > {output}"
+
+rule pangenome:
+  input: config["panaroo_input"]
+  output:
+    config["pangenome"],
+    config["pangenome_roary"],
+    config["structural"],
+    config["core_alignment"]
+  params: 
+    dir=config["panaroo_dir"],
+    aln="core"
+  threads: 24
+  conda: "envs/panaroo.yaml"
+  log: "out/logs/pangenome.log"
+  shell:
+    "panaroo -t {threads} -i {input} -o {params.dir} -a {params.aln} --clean-mode strict"
+
+rule lineages2covariance:
+  input:
+    "data/phylogroup.tsv"
+  output:
+    os.path.join(config["association_inputs"], "lineages_covariance.tsv")
+  log: "out/logs/lineages2covariance.log"
+  shell:
+    "python workflow/scripts/lineage2covar.py {input} > {output}"
+
+rule lineages2covariance_peu:
+  input:
+    config['mlst_peu']
+  output:
+    os.path.join(config["peu_inputs"], "lineages_covariance.tsv")
+  log: "out/logs/lineages2covariance.log"
+  shell:
+    "python workflow/scripts/lineage2covar.py {input} > {output}"
+
+rule lineages2covariance_ped:
+  input:
+    config['mlst_ped']
+  output:
+    os.path.join(config["ped_inputs"], "lineages_covariance.tsv")
+  log: "out/logs/lineages2covariance.log"
+  shell:
+    "python workflow/scripts/lineage2covar.py {input} > {output}"
+
+rule lineages2covariance_b2:
+  input:
+    config['mlst_b2']
+  output:
+    os.path.join(config["B2_inputs"], "lineages_covariance.tsv")
+  log: "out/logs/lineages2covariance.log"
+  shell:
+    "python workflow/scripts/lineage2covar.py {input} > {output}"
+
+rule age2cov:
+  input: "out/associations/inputs/age_input.tsv"
+  output: "out/associations/inputs/age_covariance.tsv"
+  log: "out/log/age2cov.log"
+  shell:
+    "python workflow/scripts/lineage2covar.py {input} > {output}"
+
+rule heritability:
+  input:
+    phenotypes=os.path.join(config['association_inputs'], 'phenotypes.tsv'),
+    similarity=os.path.join(config['association_inputs'], 'similarity.tsv'),
+    lineage=os.path.join(config['association_inputs'], 'lineages_covariance.tsv'),
+    unitigs=config['unitigs'],
+    age2cov="out/associations/inputs/age_covariance.tsv"
+  output:
+    h='out/associations/heritability_/heritability.tsv',
+    h_ci="out/associations/heritability_/heritability.ci.tsv",
+    h_lineages='out/associations/heritability_/heritability_lineages.tsv',
+    h_age2cov = "out/associations/heritability_/h_age2cov.tsv",
+    h_age="out/associations/heritability_/heritability_age.tsv",
+    h_age_lineages="out/associations/heritability_/heritability_age_lineages.tsv",
+    h_sex="out/associations/heritability_/heritability_sex.tsv",
+    h_sex_lineages="out/associations/heritability_/heritability_sex_lineages.tsv",
+    h_date="out/associations/heritability_/heritability_date.tsv",
+    h_date_lineages="out/associations/heritability_/heritability_date_lineages.tsv"
+  params:
+    covariates=lambda wildcards: config['covariates'],
+    covariate_age = "4",
+    covariate_sex = "5",
+    covariate_date = "3",
+    covariates_="3 5"
+  conda: "envs/limix.yaml"
+  log: "out/logs/heritability.log"
+  shell:
+    """
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariates} > {output.h}
+    python workflow/scripts/prepare_fiesta.py {input.phenotypes} {input.similarity} \
+    -p commensal \
+    --use-covariates {params.covariates} \
+    --prefix tmp/commensal_all
+    grep normal {output.h} | awk '{{print $3}}' > tmp/commensal_all.estimates.txt
+    grep normal {output.h} | awk '{{print $3}}' >> tmp/commensal_all.estimates.txt
+    python albi/albi.py -k tmp/commensal_all_values.txt \
+    -f tmp/commensal_all.estimates.txt \
+    | grep -v "Estimating" | grep -v '#' > {output.h_ci}
+    grep normal {output.h} | awk '{{print $4}}' > tmp/commensal_all.estimates.txt
+    grep normal {output.h} | awk '{{print $4}}' >> tmp/commensal_all.estimates.txt
+    python albi/albi.py -k tmp/commensal_all_values.txt -x tmp/commensal_all_covariates.txt \
+    -v tmp/commensal_all_vectors.txt \
+    -f tmp/commensal_all.estimates.txt \
+    | grep -v "Estimat" | grep -v '#' >> {output.h_ci}
+
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariates} > {output.h_lineages}
+    python workflow/scripts/prepare_fiesta.py {input.phenotypes} {input.lineage} \
+    -p commensal \
+    --use-covariates {params.covariates} \
+    --prefix tmp/commensal_lineage
+    grep normal {output.h_lineages} | awk '{{print $3}}' > tmp/commensal_lineage.estimates.txt
+    grep normal {output.h_lineages} | awk '{{print $3}}' >> tmp/commensal_lineage.estimates.txt
+    python albi/albi.py -k tmp/commensal_lineage_values.txt \
+    -f tmp/commensal_lineage.estimates.txt \
+    | grep -v "Estimating" | grep -v '#' >> {output.h_ci}
+    grep normal {output.h_lineages} | awk '{{print $4}}' > tmp/commensal_linegae.estimates.txt
+    grep normal {output.h_lineages} | awk '{{print $4}}' >> tmp/commensal_lineage.estimates.txt
+    python albi/albi.py -k tmp/commensal_lineage_values.txt -x tmp/commensal_lineage_covariates.txt \
+    -v tmp/commensal_lineage_vectors.txt \
+    -f tmp/commensal_lineage.estimates.txt \
+    | grep -v "Estimat" | grep -v '#' >> {output.h_ci}
+    
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.age2cov} \
+    -p commensal --use-covariates {params.covariates_} > {output.h_age2cov}
+    
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariate_age} > {output.h_age}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariate_age} > {output.h_age_lineages}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariate_sex} > {output.h_sex}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariate_sex} > {output.h_sex_lineages}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariate_date} > {output.h_date}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariate_date} > {output.h_date_lineages}
+    """
+rule combine_heritability:
+  input:
+    h="out/associations/heritability_/heritability.tsv",
+    hl="out/associations/heritability_/heritability_lineages.tsv",
+    hci="out/associations/heritability_/heritability.ci.tsv"
+  output:
+    hcombi="out/associations/heritability_/heritability_combined.tsv"
+  log: "out/logs/combine_h2.log"
+  shell:
+    "python workflow/scripts/combine_heritability.py {input} > {output}"
+
+rule heritability_peu:
+  input:
+    phenotypes=os.path.join(config['peu_inputs'], 'phenotypes.tsv'),
+    similarity=os.path.join(config['peu_inputs'], 'similarity.tsv'),
+    lineage=os.path.join(config['peu_inputs'], 'lineages_covariance.tsv'),
+    unitigs=config['unitigs'],
+  output:
+    h='out/peu/heritability/heritability.tsv',
+    h_lineages='out/peu/heritability/heritability_lineages.tsv'
+  params:
+    covariates=lambda wildcards: config['covariates']
+  conda: "envs/limix.yaml"
+  log: "out/logs/heritability.log"
+  shell:
+    """
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariates} > {output.h}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariates} > {output.h_lineages}
+    """
+
+rule heritability_ped:
+  input:
+    phenotypes=os.path.join(config['ped_inputs'], 'phenotypes.tsv'),
+    similarity=os.path.join(config['ped_inputs'], 'similarity.tsv'),
+    lineage=os.path.join(config['ped_inputs'], 'lineages_covariance.tsv'),
+    unitigs=config['unitigs'],
+  output:
+    h='out/ped/heritability/heritability.tsv',
+    h_lineages='out/ped/heritability/heritability_lineages.tsv',
+  params:
+    covariates=lambda wildcards: config['covariates']
+  conda: "envs/limix.yaml"
+  log: "out/logs/heritability.log"
+  shell:
+    """
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariates} > {output.h}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariates} > {output.h_lineages}
+    """
+
+rule heritability_b2:
+  input:
+    phenotypes=os.path.join(config['B2_inputs'], 'phenotypes.tsv'),
+    similarity=os.path.join(config['B2_inputs'], 'similarity.tsv'),
+    lineage=os.path.join(config['B2_inputs'], 'lineages_covariance.tsv'),
+    unitigs=config['unitigs']
+  output:
+    h='out/B2/heritability/heritability.tsv',
+    h_lineages='out/B2/heritability/heritability_lineages.tsv'
+  params:
+    covariates=lambda wildcards: config['covariates']
+  conda: "envs/limix.yaml"
+  log: "out/logs/heritability.log"
+  shell:
+    """
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.similarity} \
+    -p commensal --use-covariates {params.covariates} > {output.h}
+    python workflow/scripts/estimate_heritability.py {input.phenotypes} {input.lineage} \
+    -p commensal --use-covariates {params.covariates} > {output.h_lineages}
+    """
+
+# phylogenetic tree running on the cluster
+
+rule prepare_pyseer:
+  input:
+    variants=config["unitigs_input"],
+    phenotypes=config["full_imputed"],
+    similarity=config["similarities"],
+    distances=config["distances"],
+    lineage=config["phylogroup"]
+  output:
+    phenotypes=os.path.join(config["association_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["association_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["association_inputs"], "distances.tsv"),
+    lineage=os.path.join(config["association_inputs"], "lineages.tsv")
+  params: config["association_inputs"]
+  log: "out/logs/prepare_pyseer.log"
+  shell:
+    "python3 workflow/scripts/prepare_pyseer.py {input} {params}"
+
+rule prepare_pyseer_peu:
+  input:
+    variants=config["unitigs_input"],
+    phenotypes=config["peu"],
+    similarity=config["similarities"],
+    distances=config["distances"],
+    lineage=config["phylogroup"]
+  output:
+    phenotypes=os.path.join(config["peu_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["peu_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["peu_inputs"], "distances.tsv"),
+    lineage=os.path.join(config["peu_inputs"], "lineages.tsv")
+  params: config["peu_inputs"]
+  log: "out/logs/prepare_pyseer_peu.log"
+  shell:
+    "python3 workflow/scripts/prepare_pyseer.py {input} {params}"
+
+rule prepare_pyseer_ped:
+  input:
+    variants=config["unitigs_input"],
+    phenotypes=config["ped"],
+    similarity=config["similarities"],
+    distances=config["distances"],
+    lineage=config["phylogroup"]
+  output:
+    phenotypes=os.path.join(config["ped_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["ped_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["ped_inputs"], "distances.tsv"),
+    lineage=os.path.join(config["ped_inputs"], "lineages.tsv")
+  params: config["ped_inputs"]
+  log: "out/logs/prepare_pyseer_ped.log"
+  shell:
+    "python3 workflow/scripts/prepare_pyseer.py {input} {params}"
+
+rule prepare_B2:
+  input:
+    full=config["typing"]
+  output:
+    B2=config["B2_input"]
+  shell:
+    "python workflow/scripts/prepare_B2.py {input} > {output}"
+
+rule prepare_pyseer_B2:
+  input:
+    variants=config["unitigs_input"],
+    phenotypes=config["full_imputed"],
+    similarity=config["similarities"],
+    distances=config["distances"],
+    lineage=config["B2_input"]
+  output:
+    phenotypes=os.path.join(config["B2_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["B2_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["B2_inputs"], "distances.tsv")
+  params: config["B2_inputs"]
+  log: "out/logs/prepare_pyseer_B2.log"
+  shell:
+    """
+    python3 workflow/scripts/prepare_pyseer.py {input} {params}
+    """
+
+# --- BSI vs Commensal --- #
+
+## -- WG GWAS -- ##
+
+rule pyseer_wg:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["association_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["association_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["association_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["association_inputs"], "lineages.tsv")
+  output:
+    vars="out/associations/wg_vars.npz",
+    model="out/associations/wg_model.pkl",
+    unitigs_wg="out/associations/unitigs_wg.tsv",
+    unitigs_wg_cov="out/associations/unitigs_wg_cov.tsv",
+    st_err="out/associations/wg_sterr.txt",
+    st_err_cov="out/associations/wg_sterr_cov.txt"
+  params:
+    covariates=lambda wildcards: config["covariates"],
+    vars="out/associations/wg_vars",
+    model="out/associations/wg_model"
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --save-vars {params.vars} --save-model {params.model} \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --covariates {input.phenotypes} \
+           --use-covariates {params.covariates} \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --save-vars {params.vars} --save-model {params.model} \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg_cov} 2> {output.st_err_cov}
+    """
+
+rule map_back_wg:
+  input:
+    expand("out/associations/mapped_wg/{sample}.txt",
+           sample=_read_samples(config["unitigs_input"])),
+    expand("out/associations/mapped_wg_cov/{sample}.txt",
+           sample=_read_samples(config["unitigs_input"]))
+  output:
+    "out/associations/mapped_wg.done"
+  shell:
+    "touch {output}"
+
+rule run_map_back_wg:
+  input:
+    passing="out/associations/unitigs_wg.tsv",
+    passing_cov="out/associations/unitigs_wg_cov.tsv",
+    fasta=os.path.join(config["fastas"], "{sample}.fasta"),
+    gff=os.path.join(config["gffs"], "{sample}.gff"),
+    pangenome=config["pangenome_roary"]
+  output:
+    wg="out/associations/mapped_wg/{sample}.txt",
+    wg_cov="out/associations/mapped_wg_cov/{sample}.txt"
+  params:
+    "out/associations/map_back_wg_{sample}"
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/map_back_wg_{sample}.log"
+  shell:
+    """
+    mkdir -p {params} && \
+    python workflow/scripts/map_back.py {input.passing} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg}
+    python workflow/scripts/map_back.py {input.passing_cov} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg_cov}
+    """
+
+rule map_back_reference:
+  input:
+    passing="out/associations/unitigs_wg.tsv",
+    fasta=os.path.join(config["references_dir"], "UTI89", "UTI89.fna"),
+    gff=os.path.join(config["references_dir"], "UTI89", "UTI89.gff"),
+  output:
+    "out/associations/mapped_reference/UTI89.txt"
+  params:
+    "/tmp/map_back_reference"
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/map_back_ref.log"
+  shell:
+    """
+    mkdir -p {params} && \
+    python workflow/scripts/map_back.py {input.passing} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details > {output}
+    """
+
+rule run_map_summary_wg:
+  input:
+    phenotypes=os.path.join(config["association_inputs"], "phenotypes.tsv"),
+    filtered="out/associations/unitigs_wg.tsv",
+    filtered_cov="out/associations/unitigs_wg_cov.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/associations/mapped_wg.done"
+  output:
+    mapped="out/associations/mapped_wg.tsv",
+    summary="out/associations/summary_wg.tsv",
+    mapped_cov="out/associations/mapped_wg_cov.tsv",
+    summary_cov="out/associations/summary_wg_cov.tsv"
+  log: "out/logs/map_summary_wg.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/associations/mapped_wg/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped_cov}
+    cat out/associations/mapped_wg_cov/*.txt >> {output.mapped_cov}
+    python workflow/scripts/mapped_summary.py {output.mapped_cov} \
+           {input.phenotypes} commensal {input.filtered_cov} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary_cov}
+    """
+
+rule run_annotate_summary_wg:
+  input:
+    summary="out/associations/summary_wg.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/associations/naive/annotated_summary_wg.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/associations/naive/summary",
+    sample="out/associations/naive/sample.faa",
+    annotations="out/associations/naive/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+rule run_annotate_summary_cov:
+  input:
+    summary="out/associations/summary_wg_cov.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/associations/cov/annotated_summary_wg_cov.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/associations/cov/summary",
+    sample="out/associations/cov/sample.faa",
+    annotations="out/associations/cov/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+  """
+
+# --- BSI_PE_Urinaire vs Commensal --- #
+
+## -- WG GWAS -- ##
+
+rule pyseer_wg_peu:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["peu_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["peu_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["peu_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["peu_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/peu/unitigs_wg.tsv",
+    st_err="out/peu/wg_sterr.txt",
+    model="out/peu/wg_model.pkl",
+    vars="out/peu/wg_vars.pkl"
+  params:
+    covariates=lambda wildcards: config["covariates"],
+    model="out/peu/wg_model",
+    vars="out/peu/wg_vars"
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_peu.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --save-vars {params.vars} --save-model {params.model} \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+
+rule pyseer_wg_peu_cov:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["peu_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["peu_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["peu_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["peu_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/peu/unitigs_wg_cov.tsv",
+    st_err="out/peu/wg_sterr_cov.txt",
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_peu_cov.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --covariates {input.phenotypes} \
+           --use-covariates 3 4 5 \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+  
+rule map_back_wg_peu:
+  input:
+    expand("out/peu/mapped_wg/{sample}.txt",
+           sample=_read_pe_samples(config["peu"])),
+    expand("out/peu/mapped_wg_cov/{sample}.txt",
+           sample=_read_pe_samples(config["peu"]))
+  output:
+    "out/peu/mapped_wg.done"
+  shell:
+    "touch {output}"
+
+rule run_map_back_wg_peu:
+  input:
+    passing="out/peu/unitigs_wg.tsv",
+    passing_cov="out/peu/unitigs_wg_cov.tsv",
+    fasta=os.path.join(config["fastas"], "{sample}.fasta"),
+    gff=os.path.join(config["gffs"], "{sample}.gff"),
+    pangenome=config["pangenome_roary"]
+  output:
+    wg="out/peu/mapped_wg/{sample}.txt",
+    wg_cov="out/peu/mapped_wg_cov/{sample}.txt"
+  params:
+    "out/peu/map_back_wg_{sample}"
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/map_peu_{sample}.log"
+  shell:
+    """
+    mkdir -p {params} && \
+    python workflow/scripts/map_back.py {input.passing} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg}
+    python workflow/scripts/map_back.py {input.passing_cov} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg_cov}
+    """
+
+rule run_map_summary_wg_peu:
+  input:
+    phenotypes=os.path.join(config["peu_inputs"], "phenotypes.tsv"),
+    filtered="out/peu/associations/unitigs_wg.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/peu/associations/mapped_wg.done"
+  output:
+    mapped="out/peu/mapped_wg.tsv",
+    summary="out/peu/summary_wg.tsv"
+  log: "out/logs/map_summary_wg_peu.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/peu/mapped_wg/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    """
+
+rule run_map_summary_cov_peu:
+  input:
+    phenotypes=os.path.join(config["peu_inputs"], "phenotypes.tsv"),
+    filtered="out/peu/unitigs_wg_cov.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/peu/mapped_wg.done"
+  output:
+    mapped="out/peu/mapped_wg_cov.tsv",
+    summary="out/peu/summary_wg_cov.tsv"
+  log: "out/logs/map_summary_wg_peu.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/peu/mapped_wg_cov/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    """
+
+rule run_annotate_summary_wg_peu:
+  input:
+    summary="out/peu/summary_wg.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/peu/annotated_summary_wg.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/peu/associations/summary",
+    sample="out/peu/associations/sample.faa",
+    annotations="out/peu/associations/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+rule run_annotate_summary_cov_peu:
+  input:
+    summary="out/peu/summary_wg_cov.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/peu/annotated_summary_wg_cov.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/peu/summary",
+    sample="out/peu/sample.faa",
+    annotations="out/peu/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_peu_c.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+# --- BSI_PE_Digestive vs Commensal --- #
+
+## -- WG GWAS -- ##
+
+rule pyseer_wg_ped:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["ped_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["ped_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["ped_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["ped_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/ped/unitigs_wg.tsv",
+    st_err="out/ped/wg_sterr.txt",
+    model="out/ped/wg_model.pkl",
+    vars="out/ped/wg_vars.pkl"
+  params:
+    model="out/ped/wg_model",
+    vars="out/ped/wg_vars"
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_peu.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --save-vars {params.vars} --save-model {params.model} \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+
+rule pyseer_wg_ped_cov:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["ped_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["ped_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["ped_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["ped_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/ped/unitigs_wg_cov.tsv",
+    st_err="out/ped/wg_sterr_cov.txt"
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_peu_cov.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --covariates {input.phenotypes} \
+           --use-covariates 3 4 5 \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+
+rule map_back_wg_ped:
+  input:
+    expand("out/ped/mapped_wg/{sample}.txt",
+           sample=_read_pe_samples(config["ped"])),
+    expand("out/ped/mapped_wg_cov/{sample}.txt",
+           sample=_read_pe_samples(config["ped"])),
+  output:
+    "out/ped/mapped_wg.done"
+  shell:
+    "touch {output}"
+
+rule run_map_back_wg_ped:
+  input:
+    passing="out/ped/unitigs_wg.tsv",
+    passing_cov="out/ped/unitigs_wg_cov.tsv",
+    fasta=os.path.join(config["fastas"], "{sample}.fasta"),
+    gff=os.path.join(config["gffs"], "{sample}.gff"),
+    pangenome=config["pangenome_roary"]
+  output:
+    wg="out/ped/mapped_wg/{sample}.txt",
+    wg_cov="out/ped/mapped_wg_cov/{sample}.txt"
+  params:
+    "out/ped/map_back_wg_{sample}"
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/map_back_wg_ped_{sample}.log"
+  shell:
+    """
+    mkdir -p {params} && \
+    python workflow/scripts/map_back.py {input.passing} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg}
+    python workflow/scripts/map_back.py {input.passing_cov} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg_cov}
+    """
+
+rule run_map_summary_wg_ped:
+  input:
+    phenotypes=os.path.join(config["ped_inputs"], "phenotypes.tsv"),
+    filtered="out/ped/unitigs_wg.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/ped/mapped_wg.done"
+  output:
+    mapped="out/ped/mapped_wg.tsv",
+    summary="out/ped/summary_wg.tsv"
+  log: "out/logs/map_summary_wg_ped.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/ped/mapped_wg/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    """
+
+rule run_map_summary_cov_ped:
+  input:
+    phenotypes=os.path.join(config["ped_inputs"], "phenotypes.tsv"),
+    filtered="out/ped/unitigs_wg_cov.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/ped/mapped_wg.done"
+  output:
+    mapped="out/ped/mapped_wg_cov.tsv",
+    summary="out/ped/summary_wg_cov.tsv"
+  log: "out/logs/map_summary_wg_ped.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/ped/mapped_wg_cov/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    """
+
+rule run_annotate_summary_wg_ped:
+  input:
+    summary="out/ped/summary_wg.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/ped/associations/annotated_summary_wg.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/ped/associations/summary",
+    sample="out/ped/associations/sample.faa",
+    annotations="out/ped/associations/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_ped.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+rule run_annotate_summary_cov_ped:
+  input:
+    summary="out/ped/summary_wg_cov.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/ped/annotated_summary_wg_cov.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/ped/summary",
+    sample="out/ped/sample.faa",
+    annotations="out/ped/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+# --- B2 strains: BSI vs Commensal --- #
+
+## -- WG GWAS -- ##
+
+rule pyseer_b2:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["B2_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["B2_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["B2_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["B2_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/B2/unitigs.tsv"
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_b2.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --covariates {input.phenotypes} \
+           --use-covariates 3 4 5 \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg}
+    """
+
+rule pyseer_wg_b2:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["B2_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["B2_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["B2_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["B2_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/B2/unitigs_wg.tsv",
+    st_err="out/B2/wg_sterr.txt",
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_b2.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+
+rule pyseer_wg_b2_cov:
+  input:
+    unitigs=config["unitigs"],
+    phenotypes=os.path.join(config["B2_inputs"], "phenotypes.tsv"),
+    similarity=os.path.join(config["B2_inputs"], "similarity.tsv"),
+    distances=os.path.join(config["B2_inputs"], "distances.tsv"),
+    lineages=os.path.join(config["B2_inputs"], "lineages.tsv")
+  output:
+    unitigs_wg="out/B2/unitigs_wg_cov.tsv",
+    st_err="out/B2/wg_sterr_cov.txt",
+  threads: 2
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_wg_b2_cov.log"
+  shell:
+    """
+    pyseer --phenotypes {input.phenotypes} \
+           --phenotype-column commensal \
+           --covariates {input.phenotypes} \
+           --use-covariates 3 4 5 \
+           --kmers {input.unitigs} \
+           --uncompressed \
+           --distances {input.distances} \
+           --wg enet \
+           --alpha 1 \
+           --cor-filter 0 \
+           --lineage-clusters {input.lineages} \
+           --sequence-reweighting \
+           --cpu {threads} > {output.unitigs_wg} 2> {output.st_err}
+    """
+
+rule map_back_wg_B2:
+  input:
+    expand("out/B2/mapped_wg_cov/{sample}.txt",
+           sample=_read_pe_samples(config["B2_input"]))
+  output:
+    "out/B2/mapped_wg.done"
+  shell:
+    "touch {output}"
+
+rule run_map_back_wg_B2:
+  input:
+    passing_cov="out/B2/unitigs_wg_cov.tsv",
+    fasta=os.path.join(config["fastas"], "{sample}.fasta"),
+    gff=os.path.join(config["gffs"], "{sample}.gff"),
+    pangenome=config["pangenome_roary"]
+  output:
+    wg_cov="out/B2/mapped_wg_cov/{sample}.txt"
+  params:
+    "out/B2/map_back_wg_{sample}"
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/map_back_wg_B2_{sample}.log"
+  shell:
+    """
+    mkdir -p {params} && \
+    python workflow/scripts/map_back.py {input.passing_cov} {input.fasta} --tmp-prefix {params} --gff {input.gff} --print-details --roary {input.pangenome} > {output.wg_cov}
+    """
+
+rule run_map_summary_wg_B2:
+  input:
+    phenotypes=os.path.join(config["B2_inputs"], "phenotypes.tsv"),
+    filtered="out/B2/unitigs_wg_cov.tsv",
+    pangenome=config["pangenome"],
+    mapped="out/B2/mapped_wg.done"
+  output:
+    mapped="out/B2/mapped_cov.tsv",
+    summary="out/B2/summary_cov.tsv"
+  log: "out/logs/map_summary_wg_B2.log"
+  shell:
+    """
+    echo -e "strain\\tunitig\\tcontig\\tstart\\tend\\tstrand\\tupstream\\tgene\\tdownstream" > {output.mapped}
+    cat out/B2/mapped_wg_cov/*.txt >> {output.mapped}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique \
+           > {output.summary}
+    """
+
+rule run_annotate_summary_wg_B2:
+  input:
+    summary="out/B2/summary_cov.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/B2/annotated_summary_cov.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/B2/summary",
+    sample="out/B2/sample.faa",
+    annotations="out/B2/summary.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_wg_B2.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+# --- COG/GO terms enrichment analysis --- #
+
+rule get_reference:
+  input:
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"],
+    wg_summary="out/associations/summary_wg.tsv"
+  output:
+    "out/associations/C001-001-P2.tsv"
+  params:
+    strain="C001-001-P2",
+    emapper_data=config["emapper"],
+    emapper_base="out/associations/C001-001-P2",
+    sample="out/associations/C001-001-P2.faa",
+    annotations="out/associations/C001-001-P2.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_C001-001-P2.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --focus-strain {params.strain} --only-focus > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output}
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+    """
+
+# jupyter-lab for COG/GO terms enrichment analysis
+
+# --- Virulence factors enrichment analyis --- #
+
+# get the fasta files from the sampled pangenome
+# then blastn them against the virulence factors fasta file
+
+rule get_reference_nucl:
+  input:
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"],
+    wg_summary="out/associations/summary_wg.tsv"
+  output:
+    "out/C001-001-P2_nucl.faa"
+  params:
+    strain="C001-001-P2",
+    sample="out/C001-001-P2_nucl.faa"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_C001-001-P2.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --focus-strain {params.strain} --only-focus --nucleotide > {params.sample}
+    """
+
+rule blast_reference:
+  input:
+    ref="out/C001-001-P2_nucl.faa",
+    query="data/AllVFs.fasta"
+  output:
+    "out/ref.blast.txt"
+  threads: 2
+  params:
+    format="6 qseqid sseqid pident qlen slen length nident",
+  log: "out/logs/blast.log"
+  threads: 2
+  conda: "envs/blast.yaml"
+  shell:
+    """
+    blastn -query {input.query} -out {output} -subject {input.ref} -outfmt {params.format}
+    """
+
+# -- WG -- #
+
+rule sample_nucleotides:
+  input:
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/sample_nuc.faa"
+  threads: 2
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/sample_nuc.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --nucleotide > {output}
+    """
+
+rule blast_pangenome_vf:
+  input:
+    query="data/AllVFs.fasta",
+    nucl="out/sample_nuc.faa"
+  output:
+    "out/sample.blast.txt"
+  threads: 2
+  log: "out/logs/blast.log"
+  conda: "envs/blast.yaml"
+  shell:
+    """
+    blastn -query {input.query} -out {output} -subject {input.nucl} -outfmt "6 qseqid sseqid pident qlen slen length nident"
+    """
+# blastn -query data/AllVFs.fasta -out out/associations/full_db.blast.txt -subject out/associations/sample_nuc.faa -outfmt "6 qseqid sseqid pident qlen slen length nident"
+# jupyter-lab for virulence factors enrichment analysis
+
+# --- Antimicrobial resistance genes enrichment analysis --- #
+
+# using the same reference as the VAGs enrichment analysis
+
+rule blast_reference_amr:
+  input:
+    ref="out/C001-001-P2_nucl.faa",
+    query="data/sequences_resfinder.fasta"
+  output:
+    "out/ref_amr.blast.txt"
+  threads: 2
+  params:
+    format="6 qseqid sseqid pident qlen slen length nident",
+  log: "out/logs/blast.log"
+  threads: 2
+  conda: "envs/blast.yaml"
+  shell:
+    """
+    blastn -query {input.query} -out {output} -subject {input.ref} -outfmt {params.format}
+    """
+
+rule blast_pangenome_amr:
+  input:
+    query="data/sequences_resfinder.fasta",
+    nucl="out/sample_nuc.faa"
+  output:
+    "out/sample_amr.blast.txt"
+  threads: 2
+  log: "out/logs/blast.log"
+  conda: "envs/blast.yaml"
+  shell:
+    """
+    blastn -query {input.query} -out {output} -subject {input.nucl} -outfmt "6 qseqid sseqid pident qlen slen length nident"
+    """
+
+# --- Predict phenotype in commensal strains (1980, 2000, 2010) --- #
+
+# assign unitigs to prediction set
+
+rule check_unitigs:
+  input:
+    query = config["unitigs"],
+    new_pop = config["fastas_temporal"]
+  output:
+    calls = "out/temporal/calls"
+  threads: 12
+  conda: "envs/unitig-caller.yaml"
+  shell:
+    """
+    unitig-caller --simple --refs {input.new_pop} --unitigs {input.query} --out {output.calls} --threads 12
+    """
+
+rule predict:
+  input:
+    calls="out/temporal/calls.pyseer",
+    lineage_1980="out/temporal/phylogroup_1980",
+    lineage_2000="out/temporal/phylogroup_2000",
+    lineage_2010="out/temporal/phylogroup_2010",
+    pheno_1980="out/temporal/predict.pheno_1980",
+    pheno_2000="out/temporal/predict.pheno_2000",
+    pheno_2010="out/temporal/predict.pheno_2010",
+    samples_1980="out/temporal/predict.samples_1980",
+    samples_2000="out/temporal/predict.samples_2000",
+    samples_2010="out/temporal/predict.samples_2010",
+    model="out/associations/wg_model.pkl"
+  output:
+    predictions_1980="out/temporal/predictions_1980.txt",
+    sterr_1980="out/temporal/sterr_1980.txt",
+    predictions_2000="out/temporal/predictions_2000.txt",
+    sterr_2000="out/temporal/sterr_2000.txt",
+    predictions_2010="out/temporal/predictions_2010.txt",
+    sterr_2010="out/temporal/sterr_2010.txt",
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_temporal.log"
+  shell:
+    """
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_1980} \
+           --true-values {input.pheno_1980} \
+           {input.model} {input.samples_1980} \
+           > {output.predictions_1980} 2> {output.sterr_1980}
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_2000} \
+           --true-values {input.pheno_2000} \
+           {input.model} {input.samples_2000} \
+           > {output.predictions_2000} 2> {output.sterr_2000}
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_2010} \
+           --true-values {input.pheno_2010} \
+           {input.model} {input.samples_2010} \
+           > {output.predictions_2010} 2> {output.sterr_2010}
+    """
+
+rule predict_covariates:
+  input:
+    calls="out/temporal/calls.pyseer",
+    lineage_1980="out/temporal/phylogroup_1980",
+    lineage_2000="out/temporal/phylogroup_2000",
+    lineage_2010="out/temporal/phylogroup_2010",
+    pheno_1980="out/temporal/predict.pheno_1980",
+    pheno_2000="out/temporal/predict.pheno_2000",
+    pheno_2010="out/temporal/predict.pheno_2010",
+    cov_1980="out/temporal/predict.covariates_1980",
+    cov_2000="out/temporal/predict.covariates_2000",
+    cov_2010="out/temporal/predict.covariates_2010",
+    samples_1980="out/temporal/predict.samples_1980",
+    samples_2000="out/temporal/predict.samples_2000",
+    samples_2010="out/temporal/predict.samples_2010",
+    model="out/associations/wg_model.pkl"
+  output:
+    predictions_1980="out/temporal/predictions_cov_1980.txt",
+    sterr_1980="out/temporal/sterr_cov_1980.txt",
+    predictions_2000="out/temporal/predictions_cov_2000.txt",
+    sterr_2000="out/temporal/sterr_cov_2000.txt",
+    predictions_2010="out/temporal/predictions_cov_2010.txt",
+    sterr_2010="out/temporal/sterr_cov_2010.txt",
+  conda: "envs/pyseer.yaml"
+  log: "out/logs/pyseer_temporal_cov.log"
+  shell:
+    """
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_1980} \
+           --true-values {input.pheno_1980} \
+           --covariates {input.cov_1980} --use-covariates 4 5 \
+           {input.model} {input.samples_1980} \
+           > {output.predictions_1980} 2> {output.sterr_1980}
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_2000} \
+           --true-values {input.pheno_2000} \
+           --covariates {input.cov_2000} --use-covariates 4 5 \
+           {input.model} {input.samples_2000} \
+           > {output.predictions_2000} 2> {output.sterr_2000}
+    enet_predict_pyseer --kmers {input.calls} \
+           --uncompressed \
+           --lineage-clusters {input.lineage_2010} \
+           --true-values {input.pheno_2010} \
+           --covariates {input.cov_2010} --use-covariates 4 5 \
+           {input.model} {input.samples_2010} \
+           > {output.predictions_2010} 2> {output.sterr_2010}
+    """

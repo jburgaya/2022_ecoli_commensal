@@ -1,0 +1,5 @@
+channels:
+ - bioconda
+dependencies:
+ - scikit-learn = 1.1
+ - poppunk=2.4

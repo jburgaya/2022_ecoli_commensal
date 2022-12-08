@@ -1,0 +1,115 @@
+# ----- params ----- #
+
+## references for SNPs mapping
+references: ["ED1a", "IAI1", "IAI39", "K-12", "UMN026", "UTI89", "CFT073", "536"]
+
+## target for associations
+targets: ["commensal"]
+targets_wg: ["commensal"]
+covariates: "3 4 5"
+covariates_temporal: "3 4"
+
+# ----- inputs (already there) ----- #
+
+## sample file commensal + bsi
+# full obtained from jupyter-lab prepare_commensals and prepare_fulldataset
+# includes phenotypes
+full: "data/full_reencoded.csv"
+peu: "data/pe_urinaire_imputed.csv"
+ped: "data/pe_digestive_imputed.csv"
+
+## genomes
+fastas: "data/fastas"
+gffs: "data/gffs"
+
+## references
+panaroo_ref_input: "data/panaroo_ref_input.txt"
+# snpeff
+references_dir: "data/references"
+snps_reference: "data/references/IAI39/IAI39.gbk"
+snps_reference_gff: "data/references/IAI39/IAI39.gff"
+snps_reference_faa: "data/references/IAI39/IAI39.faa"
+# path to uniref50 unzipped fasta file
+# note: can also be a symbolic link
+uniref50: "data/uniref50.fasta"
+
+# eggnog-mapper
+# path to eggnog-mapper data directory
+# note: can also be a symbolic link
+emapper: "data/eggnog-mapper"
+
+## virulence factors list
+virulence: "data/virulence_ecoli.fsa"
+
+## blast db
+blast_db: "data/virulence_db/virulence_factors"
+
+# ----- outputs ----- #
+
+## dataset
+full_imputed: "data/full_imputed.csv"
+typing: "data/phenotype.tsv"
+B2_input: "data/B2.tsv"
+
+## st
+mlst: "data/st.csv"
+mlst_peu: "data/st_peu.csv"
+mlst_ped: "data/st_ped.csv"
+mlst_b2: "data/st_b2.csv"
+
+## phylogroup
+# generated outside the workflow with ClermonTyping
+phylogroup: "data/phylogroups.tsv"
+
+## distance (mash)
+# generated outside the workflow | workflow/scripts/mash_input.py
+mash_input: "out/mash_input.txt"
+#
+sketches_base: "out/sketches"
+sketches: "out/sketches.msh"
+distances: "out/distances.tsv"
+
+## unitigs
+# generated outside the workflow
+unitigs_input: "out/unitigs_input.txt"
+#
+unitigs_dir: "out/unitigs"
+unitigs: "out/unitigs/unitigs.txt"
+unitigs_rtab: "out/unitigs/unitigs.unique_rows.Rtab"
+
+## similarity
+similarities: "out/similarity.tsv"
+
+## pangenome (panaroo)
+# generated outside the workflow
+panaroo_input: "out/panaroo_input.txt"
+#
+panaroo_dir: "out/panaroo"
+pangenome: "out/panaroo/gene_presence_absence.Rtab"
+pangenome_roary: "out/panaroo/gene_presence_absence_roary.csv"
+pangenome_genes: "out/panaroo/gene_data.csv"
+structural: "out/panaroo/struct_presence_absence.Rtab"
+core_alignment: "out/panaroo/core_gene_alignment.aln"
+
+## pangenome / references (panaroo)
+panaroo_ref_input: "data/panaroo_ref_input.txt"
+#
+panaroo_ref_dir: "out/panaroo_ref"
+pangenome_ref: "out/panaroo_ref/gene_presence_absence.Rtab"
+pangenome_ref_roary: "out/panaroo_ref/gene_presence_absence_roary.csv"
+
+## associations
+association_inputs: "out/associations/inputs"
+peu_inputs: "out/peu/associations/inputs"
+ped_inputs: "out/ped/associations/inputs"
+B2_inputs: "out/B2/associations/inputs"
+
+### rare variants
+rare_snps: "out/snps/rare.vcf.gz"
+regions: "out/snps/regions.tsv"
+sift: "out/snps/sift"
+
+## temporal
+# rerun pyseer model on new population to see temporal variation
+# inputs
+fastas_temporal: "out/temporal/fastas_temporal.txt"
