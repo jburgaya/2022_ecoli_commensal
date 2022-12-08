@@ -17,8 +17,9 @@ To make a dry run of the analyis:
 ```
 snakemake --use-conda --cores 36 -n -p
 ```
-Snakemake will install the appropriate packages for each step as conda environments when running it without the `-n` flag. 
-Symbolic link to a directory containing the eggnog-mapper database should be placed in `data/eggnog-mapper`, as well as a symbolic link to the unzipped fasta file from uniref50 (`data/uniref50.fasta`).
+Snakemake will install the appropriate packages for each step as conda environments when running it without the `-n` flag.
+
+A symbolic link to a directory containing the eggnog-mapper database should be placed in `data/eggnog-mapper`, as well as one to the unzipped fasta file from uniref50 (`data/uniref50.fasta`).
 
 ## Author
 Judit Burgaya (BurgayaVentura.Judit@mh-hannover.de)
