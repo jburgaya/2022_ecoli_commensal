@@ -10,6 +10,8 @@ The input assemblies can be found under the following bioproject accessions:
 | BSI | [PRJEB39260](https://www.ebi.ac.uk/ena/browser/view/PRJEB39260), [PRJEB35745](https://www.ebi.ac.uk/ena/browser/view/PRJEB39260) |
 | Commensal | [PRJEB38489](https://www.ebi.ac.uk/ena/browser/view/PRJEB38489), [PRJEB44819](https://www.ebi.ac.uk/ena/browser/view/PRJEB44819), [PRJEB44872](https://www.ebi.ac.uk/ena/browser/view/PRJEB44872), [PRJEB39252](https://www.ebi.ac.uk/ena/browser/view/PRJEB39252), [PRJEB55584] |
 
+The fasta files should be placed inside the `data/fastas` directory, and the annotated gff files in the `data/gffs` directory.
+
 ## Usage
 To make a dry run of the analyis:
 ```
