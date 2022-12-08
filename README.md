@@ -23,3 +23,5 @@ A symbolic link to a directory containing the eggnog-mapper database should be p
 
 ## Author
 Judit Burgaya (BurgayaVentura.Judit@mh-hannover.de)
+
+The pipeline was in great part based on [this :)](https://github.com/microbial-pangenomes-lab/2021_ecoli_pathogenicity)
