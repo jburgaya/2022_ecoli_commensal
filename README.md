@@ -1,6 +1,6 @@
 # Snakemake workflow for wg-GWAS on _E. coli_ commensal and BSI
 
-Snakemake pipeline to reproduce the wg-GWAS analysis on the genetic determinants of *E. coli* bloodstream infections (BSI) and commensal isolates. Users wishing to replicate this study should place the data containig the phenotype and covariates within the 'rgb(data/) directory.
+Snakemake pipeline to reproduce the wg-GWAS analysis on the genetic determinants of *E. coli* bloodstream infections (BSI) and commensal isolates. Users wishing to replicate this study should place the data containig the phenotype and covariates within the `data/` directory.
 
 ## Input genomes
 The input assemblies can be found under the following bioproject accessions:
@@ -15,7 +15,7 @@ To make a dry run of the analyis:
 ```
 snakemake --use-conda --cores 36 -n -p
 ```
-Snakemake will install the appropriate packages for each step as conda environments. symbolic link to a directory containing the eggnog-mapper database should be placed in data/eggnog-mapper, as well as a symbolic link to the unzipped fasta file from uniref50 (data/uniref50.fasta).
+Snakemake will install the appropriate packages for each step as conda environments. symbolic link to a directory containing the eggnog-mapper database should be placed in `data/eggnog-mapper`, as well as a symbolic link to the unzipped fasta file from uniref50 (`data/uniref50.fasta`).
 
 ## Author
 Judit Burgaya (BurgayaVentura.Judit@mh-hannover.de)
