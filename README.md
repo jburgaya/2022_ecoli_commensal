@@ -1,8 +1,6 @@
 # Snakemake workflow for wg-GWAS on _E. coli_ commensal and BSI
 
-Bacterial wg-GWAS for the detection of E. coli BSI and commensal genetic determinants
-
-Snakemake workflow to reproduce the whole-genome (wg) GWAS analysis on the genetic determinants of *E. coli* bloodstream infections (BSI) and commensal isolates.
+Snakemake pipeline to reproduce the wg-GWAS analysis on the genetic determinants of *E. coli* bloodstream infections (BSI) and commensal isolates. Users wishing to replicate this study should place the data containig the phenotype and covariates within the 'rgb(data/) directory.
 
 ## Input genomes
 The input assemblies can be found under the following bioproject accessions:
