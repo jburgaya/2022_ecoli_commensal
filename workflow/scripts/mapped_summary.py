@@ -28,6 +28,10 @@ def get_options():
                         default=False,
                         action='store_true',
                         help='Also look at gene hits upstream and downstream of the unitig (default: false)')
+    parser.add_argument('--upstream-downstream-only',
+                        default=False,
+                        action='store_true',
+                        help='Only look at gene hits upstream and downstream of the unitig (default: false)')
     parser.add_argument('--length',
                         type=int,
                         default=30,
@@ -52,6 +56,10 @@ def get_options():
 if __name__ == "__main__":
     options = get_options()
 
+    if options.upstream_downstream and options.upstream_downstream_only:
+        sys.stderr.write('pick one between --upstream-downstream and --upstream-downstream-only')
+        sys.exit(1)
+
     # read phenotypes
     p = pd.read_csv(options.phenotypes, sep='\t', index_col=0)
     p = p[options.phenotype]
@@ -71,19 +79,25 @@ if __name__ == "__main__":
 
     # consider also upstream and downstream
     any_gene = []
+    flanking = []
     for up, gene, down in m[['upstream', 'gene', 'downstream']].values:
         if str(gene) != 'nan':
             any_gene.append(gene)
         # downstream > upstream (no real reason to have this)
         elif str(up) != 'nan':
             any_gene.append(up)
+            flanking.append(up)
         elif str(down) != 'nan':
             any_gene.append(down)
+            flanking.append(down)
         else:
             any_gene.append(np.nan)
+            flanking.append(np.nan)
 
-    if options.upstream_downstream:
+    if options.upstream_downstream and not options.upstream_downstream_only:
         m['gene'] = any_gene
+    elif options.upstream_downstream_only:
+        m['gene'] = flanking
 
     # remove duplicated rows (?!)
     m = m.drop_duplicates(keep='first')
