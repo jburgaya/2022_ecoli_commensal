@@ -81,7 +81,7 @@ if __name__ == "__main__":
     any_gene = []
     flanking = []
     for up, gene, down in m[['upstream', 'gene', 'downstream']].values:
-        if str(gene) != 'nan':
+        if str(gene) != 'nan' and not options.upstream_downstream_only:
             any_gene.append(gene)
         # downstream > upstream (no real reason to have this)
         elif str(up) != 'nan':
