@@ -728,7 +728,8 @@ rule run_map_summary_cov_peu:
     mapped="out/peu/mapped_wg.done"
   output:
     mapped="out/peu/mapped_wg_cov.tsv",
-    summary="out/peu/summary_wg_cov.tsv"
+    summary="out/peu/summary_wg_cov.tsv",
+    summary_intergenic="out/peu/summary_intergenic.tsv"
   log: "out/logs/map_summary_wg_peu.log"
   shell:
     """
@@ -740,6 +741,12 @@ rule run_map_summary_cov_peu:
            --length 30 --minimum-hits 9 --maximum-genes 10 \
            --unique \
            > {output.summary}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique --upstream-downstream-only\
+           > {output.summary_intergenic}
     """
 
 rule run_annotate_summary_wg_peu:
@@ -795,6 +802,33 @@ rule run_annotate_summary_cov_peu:
     python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
     > {output}
     """
+
+rule run_annotate_summary_intergenic_peu:
+  input:
+    summary="out/peu/summary_intergenic.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/peu/annotated_summary_intergenic.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/peu/intergenic",
+    sample="out/peu/sample_intergenic.faa",
+    annotations="out/peu/summary_intergenic.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_intergenic_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+  """
 
 # --- BSI_PE_Digestive vs Commensal --- #
 
@@ -926,7 +960,8 @@ rule run_map_summary_cov_ped:
     mapped="out/ped/mapped_wg.done"
   output:
     mapped="out/ped/mapped_wg_cov.tsv",
-    summary="out/ped/summary_wg_cov.tsv"
+    summary="out/ped/summary_wg_cov.tsv",
+    summary_intergenic="out/ped/summary_intergenic.tsv"
   log: "out/logs/map_summary_wg_ped.log"
   shell:
     """
@@ -938,6 +973,12 @@ rule run_map_summary_cov_ped:
            --length 30 --minimum-hits 9 --maximum-genes 10 \
            --unique \
            > {output.summary}
+    python workflow/scripts/mapped_summary.py {output.mapped} \
+           {input.phenotypes} commensal {input.filtered} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique --upstream-downstream-only\
+           > {output.summary_intergenic}
     """
 
 rule run_annotate_summary_wg_ped:
@@ -993,6 +1034,33 @@ rule run_annotate_summary_cov_ped:
     python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
     > {output}
     """
+
+rule run_annotate_summary_intergenic_ped:
+  input:
+    summary="out/ped/summary_intergenic.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/ped/annotated_summary_intergenic.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/ped/intergenic",
+    sample="out/ped/sample_intergenic.faa",
+    annotations="out/ped/summary_intergenic.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_intergenic_ped.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+  """
 
 # --- B2 strains: BSI vs Commensal --- #
 
