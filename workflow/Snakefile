@@ -487,7 +487,8 @@ rule run_map_summary_wg:
     mapped="out/associations/mapped_wg.tsv",
     summary="out/associations/summary_wg.tsv",
     mapped_cov="out/associations/mapped_wg_cov.tsv",
-    summary_cov="out/associations/summary_wg_cov.tsv"
+    summary_cov="out/associations/summary_wg_cov.tsv",
+    summary_intergenic="out/associations/summary_intergenic.tsv"
   log: "out/logs/map_summary_wg.log"
   shell:
     """
@@ -507,6 +508,12 @@ rule run_map_summary_wg:
            --length 30 --minimum-hits 9 --maximum-genes 10 \
            --unique \
            > {output.summary_cov}
+    python workflow/scripts/mapped_summary.py {output.mapped_cov} \
+           {input.phenotypes} commensal {input.filtered_cov} \
+           --pangenome {input.pangenome} \
+           --length 30 --minimum-hits 9 --maximum-genes 10 \
+           --unique --upstream-downstream-only\
+           > {output.summary_intergenic}
     """
 
 rule run_annotate_summary_wg:
@@ -551,6 +558,33 @@ rule run_annotate_summary_cov:
   threads: 8
   conda: "envs/eggnog-mapper.yaml"
   log: "out/logs/annotate_wg_peu.log"
+  shell:
+    """
+    python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
+           --groups {input.summary} > {params.sample} && \
+    emapper.py -i {params.sample} -o {params.emapper_base} \
+               --cpu {threads} --target_orthologs one2one --go_evidence all \
+               --tax_scope Bacteria --pfam_realign realign --override \
+               --data_dir {params.emapper_data} || touch {output} && \
+    python workflow/scripts/enhance_summary.py {input.summary} {params.annotations} \
+    > {output}
+  """
+
+rule run_annotate_summary_intergenic:
+  input:
+    summary="out/associations/summary_intergenic.tsv",
+    pangenome=config["pangenome_roary"],
+    genes=config["pangenome_genes"]
+  output:
+    "out/associations/cov/annotated_summary_intergenic.tsv"
+  params:
+    emapper_data=config["emapper"],
+    emapper_base="out/associations/intergenic",
+    sample="out/associations/sample_intergenic.faa",
+    annotations="out/associations/summary_intergenic.emapper.annotations"
+  threads: 8
+  conda: "envs/eggnog-mapper.yaml"
+  log: "out/logs/annotate_intergenic.log"
   shell:
     """
     python workflow/scripts/sample_pangenome.py {input.pangenome} {input.genes} \
